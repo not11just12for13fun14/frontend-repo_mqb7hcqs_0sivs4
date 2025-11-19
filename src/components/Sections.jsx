@@ -1,3 +1,4 @@
+import React from 'react'
 import { motion } from 'framer-motion'
 import { Card, Section, ProgressBar, EnergyIndicator, AddQuick } from './UI'
 import { api, getUser } from '../lib/api'
