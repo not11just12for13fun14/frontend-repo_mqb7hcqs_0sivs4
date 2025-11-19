@@ -3,6 +3,37 @@ import { motion } from 'framer-motion'
 import { Card, Section, ProgressBar, EnergyIndicator } from './UI'
 import { api, getUser } from '../lib/api'
 
+// Hook for browser Voice-to-Text using Web Speech API
+function useSpeechRecognition(onText){
+  const [recording, setRecording] = React.useState(false)
+  const recRef = React.useRef(null)
+  const start = React.useCallback(()=>{
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if(!SR){
+      alert('Reconhecimento de voz não suportado neste navegador.')
+      return
+    }
+    const rec = new SR()
+    rec.lang = 'pt-PT'
+    rec.interimResults = false
+    rec.maxAlternatives = 1
+    rec.onresult = (e)=>{
+      const text = e.results?.[0]?.[0]?.transcript
+      if(text && onText) onText(text)
+    }
+    rec.onend = ()=> setRecording(false)
+    rec.onerror = ()=> setRecording(false)
+    rec.start()
+    recRef.current = rec
+    setRecording(true)
+  }, [onText])
+  const stop = React.useCallback(()=>{
+    try{ recRef.current?.stop() }catch{}
+    setRecording(false)
+  }, [])
+  return { recording, start, stop }
+}
+
 export function Dashboard(){
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
@@ -73,16 +104,89 @@ export function Dashboard(){
   )
 }
 
+function MonthCalendar({ events, onDropEvent }){
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = today.getMonth()
+  const first = new Date(year, month, 1)
+  const startDay = first.getDay() || 7 // make Monday=1..Sunday=7
+  const daysInMonth = new Date(year, month+1, 0).getDate()
+  const totalCells = 42
+  const cells = []
+  let d = 1 - (startDay-1)
+  for(let i=0;i<totalCells;i++){
+    const dateObj = new Date(year, month, d)
+    const inMonth = dateObj.getMonth()===month
+    const dayEvents = events.filter(e=>{
+      const sd = new Date(e.start_time)
+      return sd.getFullYear()===dateObj.getFullYear() && sd.getMonth()===dateObj.getMonth() && sd.getDate()===dateObj.getDate()
+    })
+    cells.push({ dateObj, inMonth, dayEvents })
+    d++
+  }
+  function handleDrop(ev, dateObj){
+    ev.preventDefault()
+    const data = ev.dataTransfer.getData('application/json') || ev.dataTransfer.getData('text/event') || ev.dataTransfer.getData('text')
+    if(!data) return
+    try{
+      const parsed = JSON.parse(data)
+      onDropEvent?.(parsed, dateObj)
+    }catch{}
+  }
+  return (
+    <div className="grid grid-cols-7 gap-2">
+      {cells.map((c,idx)=> (
+        <div key={idx}
+          onDragOver={e=>e.preventDefault()}
+          onDrop={e=>handleDrop(e, c.dateObj)}
+          className={`min-h-[90px] rounded-lg border ${c.inMonth? 'border-white/10 bg-white/[0.04]':'border-white/[0.06] bg-white/[0.02]'} p-2`}>
+          <div className="text-xs text-white/60 mb-1">{c.dateObj.getDate()}</div>
+          <div className="space-y-1">
+            {c.dayEvents.slice(0,3).map((e,i)=> (
+              <div key={i} className="text-[11px] truncate bg-[#1A3CFF]/20 border border-[#1A3CFF]/30 rounded px-2 py-0.5">{e.title}</div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function Agenda(){
   const [events, setEvents] = React.useState([])
   const [loading, setLoading] = React.useState(true)
-  React.useEffect(()=>{
-    const u = getUser(); if(!u) return
+  const [iaPlan, setIaPlan] = React.useState(null)
+  const u = getUser()
+  const load = React.useCallback(()=>{
+    if(!u) return
+    setLoading(true)
     api.get('/events', { user_id: u.user_id })
       .then(setEvents)
       .catch(()=>{})
       .finally(()=>setLoading(false))
-  },[])
+  },[u])
+  React.useEffect(()=>{ load() }, [load])
+
+  async function updateEventDate(payload, dateObj){
+    // keep original time + duration
+    const ev = events.find(e=> String(e._id)===String(payload.id))
+    if(!ev) return
+    const start = new Date(ev.start_time)
+    const end = new Date(ev.end_time)
+    const duration = end.getTime() - start.getTime()
+    const newStart = new Date(dateObj)
+    newStart.setHours(start.getHours(), start.getMinutes(), 0, 0)
+    const newEnd = new Date(newStart.getTime() + duration)
+    await api.patch(`/events/${payload.id}` , { start_time: newStart.toISOString(), end_time: newEnd.toISOString() })
+    load()
+  }
+
+  async function generateWeeklyPlan(){
+    if(!u) return
+    const r = await api.post('/ai/weekly-plan', { user_id: u.user_id })
+    setIaPlan(r)
+  }
+
   return (
     <div className="grid lg:grid-cols-3 gap-4">
       <Card>
@@ -90,10 +194,13 @@ export function Agenda(){
           {loading? <div className="text-white/60">A carregar…</div> : (
             <div className="grid gap-2">
               {events.slice(0,10).map((e,i)=> (
-                <div key={i} className="text-sm bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                <motion.div key={i} draggable onDragStart={(ev)=>{
+                    ev.dataTransfer.setData('application/json', JSON.stringify({ id: e._id }))
+                    ev.dataTransfer.effectAllowed = 'move'
+                  }} whileHover={{x:4}} className="text-sm bg-white/5 border border-white/10 rounded-lg px-3 py-2 cursor-grab">
                   <div className="font-medium">{e.title}</div>
                   <div className="text-white/60">{new Date(e.start_time).toLocaleString()}</div>
-                </div>
+                </motion.div>
               ))}
               {events.length===0 && <div className="text-white/60">Sem eventos ainda.</div>}
             </div>
@@ -101,13 +208,13 @@ export function Agenda(){
         </Section>
       </Card>
       <Card>
-        <Section title="Agenda Mensal" subtitle="Visão macro">
-          <div className="text-white/60 text-sm">Em breve: calendário interativo com drag-and-drop.</div>
+        <Section title="Agenda Mensal" subtitle="Arrasta eventos para mover o dia" right={<button onClick={generateWeeklyPlan} className="text-xs bg-[#1A3CFF] hover:bg-[#1430cc] rounded px-2 py-1">Plano semanal (IA)</button>}>
+          <MonthCalendar events={events} onDropEvent={updateEventDate} />
         </Section>
       </Card>
       <Card>
-        <Section title="IA de Agenda" subtitle="Reorganiza a semana automaticamente">
-          <div className="text-white/60 text-sm">Dá-nos contexto e a IA gera um plano equilibrado.</div>
+        <Section title="IA de Agenda" subtitle="Plano sugerido">
+          <pre className="text-xs whitespace-pre-wrap text-white/80">{iaPlan? JSON.stringify(iaPlan, null, 2): 'Clica em "Plano semanal (IA)" para gerar.'}</pre>
         </Section>
       </Card>
     </div>
@@ -120,6 +227,7 @@ export function Tarefas(){
   const [title, setTitle] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
+  const [aiOrder, setAiOrder] = React.useState(null)
 
   const load = React.useCallback(()=>{
     if(!u) return
@@ -142,13 +250,26 @@ export function Tarefas(){
     } finally { setSaving(false) }
   }
 
+  async function prioritize(){
+    if(!u) return
+    const r = await api.post('/ai/prioritize', { user_id: u.user_id })
+    setAiOrder(r)
+  }
+
+  const { recording, start: startRec, stop: stopRec } = useSpeechRecognition(text=> setTitle(t=> (t? t+" ":"") + text))
+
   return (
     <div className="grid lg:grid-cols-3 gap-4">
       <Card>
-        <Section title="Adicionar Tarefa" subtitle="Etiquetas, prioridade e data limite">
+        <Section title="Adicionar Tarefa" subtitle="Etiquetas, prioridade e data limite" right={
+          <button onClick={prioritize} className="text-xs bg-white/10 hover:bg-white/20 border border-white/10 rounded px-2 py-1">Priorizar com IA</button>
+        }>
           <div className="flex gap-2">
             <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Ex.: Rever proposta X" className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 outline-none"/>
             <button onClick={addTask} disabled={saving} className={`rounded-lg px-3 py-2 text-sm ${saving? 'bg-[#1A3CFF]/60 cursor-not-allowed':'bg-[#1A3CFF] hover:bg-[#1430cc]'}`}>Adicionar</button>
+          </div>
+          <div className="mt-2">
+            <button onClick={recording? stopRec : startRec} className={`text-xs rounded px-2 py-1 border border-white/10 ${recording? 'bg-red-500/40':'bg-white/10 hover:bg-white/20'}`}>{recording? 'Parar voz':'Adicionar por voz'}</button>
           </div>
         </Section>
       </Card>
@@ -156,16 +277,16 @@ export function Tarefas(){
         <Section title="Lista de Tarefas">
           {loading? <div className="text-white/60">A carregar…</div> : (
             <div className="grid gap-2">
-              {tasks.map((t,i)=> (
-                <motion.div key={i} whileHover={{x:4}} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+              {(aiOrder?.suggested_order || tasks).map((t,i)=> (
+                <motion.div key={t._id || i} whileHover={{x:4}} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2">
                   <div>
                     <div className="text-sm font-medium">{t.title}</div>
                     {t.due_date && <div className="text-xs text-white/60">Limite: {new Date(t.due_date).toLocaleDateString()}</div>}
                   </div>
-                  <span className="text-xs text-white/60">{t.priority}</span>
+                  <span className="text-xs text-white/60">{t.priority || '—'}</span>
                 </motion.div>
               ))}
-              {tasks.length===0 && <div className="text-white/60">Sem tarefas ainda.</div>}
+              {(tasks.length===0) && <div className="text-white/60">Sem tarefas ainda.</div>}
             </div>
           )}
         </Section>
@@ -173,7 +294,9 @@ export function Tarefas(){
       <Card>
         <Section title="Sugestões da IA" subtitle="3 prioridades do dia">
           <ul className="text-sm space-y-1">
-            {['Finalizar proposta', 'Preparar reunião', 'Treino 45min'].map((s,i)=> (<li key={i} className="flex gap-2"><span className="text-[#1A3CFF]">•</span>{s}</li>))}
+            {aiOrder?.suggested_order ? aiOrder.suggested_order.slice(0,3).map((t,i)=> (
+              <li key={i} className="flex gap-2"><span className="text-[#1A3CFF]">•</span>{t.title}</li>
+            )) : ['Finalizar proposta', 'Preparar reunião', 'Treino 45min'].map((s,i)=> (<li key={i} className="flex gap-2"><span className="text-[#1A3CFF]">•</span>{s}</li>))}
           </ul>
         </Section>
       </Card>
@@ -185,6 +308,7 @@ export function Objetivos(){
   const u = getUser()
   const [goals, setGoals] = React.useState([])
   const [loading, setLoading] = React.useState(true)
+  const [review, setReview] = React.useState(null)
   React.useEffect(()=>{
     if(!u) return
     api.get('/goals', { user_id: u.user_id })
@@ -193,10 +317,15 @@ export function Objetivos(){
       .finally(()=>setLoading(false))
   },[])
   const overall = goals.length? Math.round(goals.reduce((a,g)=>a+Number(g.progress||0),0)/goals.length) : 0
+  async function runReview(){
+    if(!u) return
+    const r = await api.post('/ai/goals-review', { user_id: u.user_id })
+    setReview(r)
+  }
   return (
     <div className="grid lg:grid-cols-3 gap-4">
       <Card>
-        <Section title="Objetivos" subtitle="Anuais, trimestrais, mensais e semanais">
+        <Section title="Objetivos" subtitle="Anuais, trimestrais, mensais e semanais" right={<button onClick={runReview} className="text-xs bg-white/10 hover:bg-white/20 border border-white/10 rounded px-2 py-1">Revisão IA</button>}>
           {loading? <div className="text-white/60">A carregar…</div> : (
             <ul className="space-y-2 text-sm">
               {goals.map((g,i)=> (
@@ -218,7 +347,7 @@ export function Objetivos(){
       </Card>
       <Card>
         <Section title="Revisão da IA" subtitle="Sugestões para a próxima semana">
-          <div className="text-sm text-white/70">Mantém 3 objetivos-chave e cria 2 ações concretas para cada um.</div>
+          <pre className="text-xs whitespace-pre-wrap text-white/80">{review? JSON.stringify(review, null, 2): 'Clica em "Revisão IA" para gerar recomendações.'}</pre>
         </Section>
       </Card>
     </div>
@@ -325,6 +454,7 @@ export function Notas(){
   const [content, setContent] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
+  const { recording, start: startRec, stop: stopRec } = useSpeechRecognition(text=> setContent(c => (c? c+"\n":"") + text))
 
   const load = React.useCallback(()=>{
     if(!u) return
@@ -350,7 +480,9 @@ export function Notas(){
   return (
     <div className="grid lg:grid-cols-3 gap-4">
       <Card>
-        <Section title="Notas rápidas">
+        <Section title="Notas rápidas" right={
+          <button onClick={recording? stopRec : startRec} className={`text-xs rounded px-2 py-1 border border-white/10 ${recording? 'bg-red-500/40':'bg-white/10 hover:bg-white/20'}`}>{recording? 'Parar voz':'Ditado por voz'}</button>
+        }>
           <div className="space-y-2">
             <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Título" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 outline-none"/>
             <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="Escreve a tua nota…" rows={4} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 outline-none"/>
