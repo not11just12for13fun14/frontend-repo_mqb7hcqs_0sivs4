@@ -1,68 +1,54 @@
-function App() {
+import React from 'react'
+import Spline from '@splinetool/react-spline'
+import { motion } from 'framer-motion'
+import { AppShell, Sidebar, Section, Card, colors } from './components/UI'
+import { Dashboard, Agenda, Tarefas, Objetivos, Saude, Alimentacao, Casa, Contactos, Notas, CentroIA } from './components/Sections'
+import { api, getUser, setUser, logout } from './lib/api'
+
+function Login({ onLogin }){
+  const [email, setEmail] = React.useState('demo@user.com')
+  const [name, setName] = React.useState('Demo')
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState('')
+
+  async function submit(e){
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const res = await api.post('/auth/login', { email, name })
+      setUser(res)
+      onLogin(res)
+    } catch (err) {
+      setError('Não foi possível iniciar sessão. Tenta novamente.')
+    } finally {
+      setLoading(false)
+    }
+  }
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Subtle pattern overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(59,130,246,0.05),transparent_50%)]"></div>
-
-      <div className="relative min-h-screen flex items-center justify-center p-8">
-        <div className="max-w-2xl w-full">
-          {/* Header with Flames icon */}
-          <div className="text-center mb-12">
-            <div className="inline-flex items-center justify-center mb-6">
-              <img
-                src="/flame-icon.svg"
-                alt="Flames"
-                className="w-24 h-24 drop-shadow-[0_0_25px_rgba(59,130,246,0.5)]"
-              />
-            </div>
-
-            <h1 className="text-5xl font-bold text-white mb-4 tracking-tight">
-              Flames Blue
-            </h1>
-
-            <p className="text-xl text-blue-200 mb-6">
-              Build applications through conversation
-            </p>
-          </div>
-
-          {/* Instructions */}
-          <div className="bg-slate-800/50 backdrop-blur-sm border border-blue-500/20 rounded-2xl p-8 shadow-xl mb-6">
-            <div className="flex items-start gap-4 mb-6">
-              <div className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold">
-                1
+    <div className="min-h-screen bg-[#0D0D0D] text-white">
+      <div className="relative">
+        <div className="absolute inset-0 pointer-events-none">
+          <Spline scene="https://prod.spline.design/4Zh-Q6DWWp5yPnQf/scene.splinecode" style={{ width: '100%', height: '100%' }} />
+        </div>
+        <div className="relative min-h-screen grid place-items-center px-4">
+          <div className="max-w-md w-full bg-black/50 backdrop-blur border border-white/10 rounded-2xl p-6">
+            <motion.h1 initial={{opacity:0, y:8}} animate={{opacity:1, y:0}} className="text-2xl font-semibold mb-2">Gestor de Alta Performance</motion.h1>
+            <p className="text-white/70 mb-4">Acede à tua área privada</p>
+            {error && <div className="mb-3 text-sm text-red-400">{error}</div>}
+            <form onSubmit={submit} className="space-y-3">
+              <div>
+                <label className="text-sm text-white/70">Nome</label>
+                <input value={name} onChange={e=>setName(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 outline-none"/>
               </div>
               <div>
-                <h3 className="font-semibold text-white mb-1">Describe your idea</h3>
-                <p className="text-blue-200/80 text-sm">Use the chat panel on the left to tell the AI what you want to build</p>
+                <label className="text-sm text-white/70">Email</label>
+                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 outline-none"/>
               </div>
-            </div>
-
-            <div className="flex items-start gap-4 mb-6">
-              <div className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold">
-                2
-              </div>
-              <div>
-                <h3 className="font-semibold text-white mb-1">Watch it build</h3>
-                <p className="text-blue-200/80 text-sm">Your app will appear in this preview as the AI generates the code</p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-4">
-              <div className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold">
-                3
-              </div>
-              <div>
-                <h3 className="font-semibold text-white mb-1">Refine and iterate</h3>
-                <p className="text-blue-200/80 text-sm">Continue the conversation to add features and make changes</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="text-center">
-            <p className="text-sm text-blue-300/60">
-              No coding required • Just describe what you want
-            </p>
+              <button type="submit" disabled={loading} className={`w-full rounded-lg px-3 py-2 transition ${loading? 'bg-[#1A3CFF]/60 cursor-not-allowed':'bg-[#1A3CFF] hover:bg-[#1430cc]'}`}>
+                {loading? 'A entrar…' : 'Entrar'}
+              </button>
+            </form>
           </div>
         </div>
       </div>
@@ -70,4 +56,41 @@ function App() {
   )
 }
 
-export default App
+export default function App(){
+  const [userState, setUserState] = React.useState(getUser())
+  const [current, setCurrent] = React.useState('dashboard')
+  const [menuOpen, setMenuOpen] = React.useState(false)
+
+  if(!userState){
+    return <Login onLogin={setUserState} />
+  }
+
+  function doLogout(){
+    logout()
+    setUserState(null)
+  }
+
+  const Content = {
+    dashboard: <Dashboard/>,
+    agenda: <Agenda/>,
+    tarefas: <Tarefas/>,
+    objetivos: <Objetivos/>,
+    saude: <Saude/>,
+    alimentacao: <Alimentacao/>,
+    casa: <Casa/>,
+    contactos: <Contactos/>,
+    notas: <Notas/>,
+    ia: <CentroIA/>
+  }[current]
+
+  return (
+    <AppShell onLogout={doLogout} onOpenMenu={()=>setMenuOpen(true)}>
+      <div className="max-w-7xl mx-auto px-4 py-6 grid lg:grid-cols-[18rem,1fr] gap-6">
+        <Sidebar current={current} onSelect={(id)=>{setCurrent(id); setMenuOpen(false)}} open={menuOpen} />
+        <main>
+          {Content}
+        </main>
+      </div>
+    </AppShell>
+  )
+}
